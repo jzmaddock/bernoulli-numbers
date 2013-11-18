@@ -17,6 +17,7 @@
 #include <boost/math/constants/constants.hpp>
 #include <boost/mpl/int.hpp>
 #include <boost/type_traits/is_convertible.hpp>
+#include <boost/detail/lightweight_mutex.hpp>
 
 namespace boost { namespace math { 
    
@@ -845,13 +846,43 @@ T bernoulli_number_imp(std::size_t n, const Policy& pol, const mpl::int_<N>& tag
    return (n & 1 ? 1 : -1) * policies::raise_overflow_error<T>("boost::math::bernoulli_b2n<%1%>(n)", 0, pol);
 }
 
+//
+// Initializer: ensure all our constants are initialized prior to the first call of main:
+//
+template <class T, class Policy>
+struct bernoulli_initializer
+{
+   struct init
+   {
+      init()
+      {
+         boost::math::bernoulli_b2n<T>(max_bernoulli<T>::value + 1, Policy());
+      }
+      void force_instantiate()const{}
+   };
+   static const init initializer;
+   static void force_instantiate()
+   {
+      initializer.force_instantiate();
+   }
+};
+
+template <class T, class Policy>
+const typename bernoulli_initializer<T, Policy>::init bernoulli_initializer<T, Policy>::initializer;
+
+
 template <class T, class Policy>
 T bernoulli_number_imp(std::size_t n, const Policy& pol, const mpl::int_<0>& tag)
 {
    if(n <= max_bernoulli<T>::value)
       return unchecked_bernoulli_imp<T>(n, tag);
 
+   bernoulli_initializer<T, Policy>::force_instantiate();
+
    static std::vector<T> bn;
+   static boost::detail::lightweight_mutex m;
+
+   boost::detail::lightweight_mutex::scoped_lock l(m);
 
    if(n >= bn.size())
    {
