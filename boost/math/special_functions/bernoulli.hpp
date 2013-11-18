@@ -748,19 +748,18 @@ inline typename disable_if_c<std::numeric_limits<T>::is_specialized, int>::type 
 template<class T, class Container, class Policy>
 inline void tangent(Container& tangent_numbers, std::size_t m, const Policy& pol)
 {
-   // TBD: Initialize this before main().
-   static std::size_t min_overflow_index = possible_overflow_index<T>();
+   static const std::size_t min_overflow_index = possible_overflow_index<T>();
 
    tangent_numbers[0U] = T(0U);
    tangent_numbers[1U] = ldexp(T(1U), tangent_scale_factor<T>());
 
-   for(std::size_t k = 2U; k <= m; k++)
+   for(std::size_t k = 2U; k < m; k++)
    {
       if(   (k >= min_overflow_index)
          && (boost::math::tools::max_value<T>()/(k - 1) < tangent_numbers[k - 1])
          )
       {
-         tangent_numbers[k] = boost::math::policies::raise_overflow_error<T>("boost::math::bernoulli<%1%>", "Overflow error while calculating tangent number %1%", pol);
+         tangent_numbers[k] = boost::math::tools::max_value<T>();
       }
       else
       {
@@ -768,9 +767,9 @@ inline void tangent(Container& tangent_numbers, std::size_t m, const Policy& pol
       }
    }
 
-   for(std::size_t k = 2; k <= m; k++)
+   for(std::size_t k = 2; k < m; k++)
    {
-      for(std::size_t j = k; j <= m; j++)
+      for(std::size_t j = k; j < m; j++)
       {
          if(   (j >= min_overflow_index)
             && (   (boost::math::tools::max_value<T>() / (j - k) < tangent_numbers[j - 1])
@@ -779,7 +778,7 @@ inline void tangent(Container& tangent_numbers, std::size_t m, const Policy& pol
             || ((boost::math::isinf)(tangent_numbers[j])))
             )
          {
-            tangent_numbers[j] = boost::math::policies::raise_overflow_error<T>("boost::math::bernoulli<%1%>", "Overflow error while calculating tangent number %1%", pol);
+            tangent_numbers[j] = boost::math::tools::max_value<T>();
          }
          else
          {
@@ -793,8 +792,10 @@ inline void tangent(Container& tangent_numbers, std::size_t m, const Policy& pol
 template <class T, class Container, class Policy>
 void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &pol)
 {
+   static const std::size_t min_overflow_index = possible_overflow_index<T>();
+
    bn.clear();
-   bn.resize(m + 1);
+   bn.resize(m);
 
    tangent<T>(bn, m, pol);
 
@@ -805,9 +806,27 @@ void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &po
    for(std::size_t i = 1; i < m; i++)
    {
       T b(i * 2);
-
-      b  = ldexp(b / (power_two * (power_two - 1)), -tangent_scale_factor<T>());
-      b *= bn[i];
+      //
+      // Not only do we need to take care to avoid spurious over/under flow in
+      // the calculation, but we also need to avoid overflow altogether in case
+      // we're calculating with a type where "bad things" happen in that case:
+      //
+      b  = ldexp(b / power_two, -tangent_scale_factor<T>());
+      b /= (power_two - 1);
+      if((i >= min_overflow_index) && (tools::max_value<T>() / bn[i] < b))
+      {
+         while(i < m)
+         {
+            b = std::numeric_limits<T>::has_infinity ? std::numeric_limits<T>::infinity() : tools::max_value<T>();
+            bn[i] = ((i % 2) ? b : -b);
+            ++i;
+         }
+         break;
+      }
+      else
+      {
+         b *= bn[i];
+      }
 
       power_two *= 4;
 
