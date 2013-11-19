@@ -72,7 +72,7 @@ struct bernoulli_imp_variant
 } // namespace detail
 
 template <class T>
-struct max_bernoulli : public detail::max_bernoulli_index<detail::bernoulli_imp_variant<T>::value>{};
+struct max_bernoulli_b2n : public detail::max_bernoulli_index<detail::bernoulli_imp_variant<T>::value>{};
 
 namespace detail{
 
@@ -658,19 +658,19 @@ inline bool bernouli_impl_index_does_overflow(std::size_t n, const mpl::true_&)
    if(std::numeric_limits<T>::max_exponent == 128)
    {
       // This corresponds to 4-byte float, IEEE 745 conformant.
-      the_index_does_overflow = (n >= max_bernoulli<float>::value * 2);
+      the_index_does_overflow = (n >= max_bernoulli_index<1>::value * 2);
    }
 
    if(std::numeric_limits<T>::max_exponent == 1024)
    {
       // This corresponds to 8-byte float, IEEE 745 conformant.
-      the_index_does_overflow = (n >= max_bernoulli<double>::value * 2);
+      the_index_does_overflow = (n >= max_bernoulli_index<2>::value * 2);
    }
 
    if(std::numeric_limits<T>::max_exponent == 16384)
    {
       // This corresponds to 16-byte float, IEEE 745 conformant.
-      the_index_does_overflow = (n >= max_bernoulli<long double>::value * 2);
+      the_index_does_overflow = (n >= max_bernoulli_index<3>::value * 2);
    }
 
    return the_index_does_overflow;
@@ -851,13 +851,13 @@ void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &po
 template <class T, class OutputIterator, class Policy, int N>
 OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::size_t n, const Policy& pol, const mpl::int_<N>& tag)
 {
-   for(std::size_t i = start; (i <= max_bernoulli<T>::value) && (i < start + n); ++i)
+   for(std::size_t i = start; (i <= max_bernoulli_b2n<T>::value) && (i < start + n); ++i)
    {
       *out = unchecked_bernoulli_imp<T>(i, tag);
       ++out;
    }
    
-   for(std::size_t i = (std::max)(max_bernoulli<T>::value + 1, start); i < start + n; ++i)
+   for(std::size_t i = (std::max)(max_bernoulli_b2n<T>::value + 1, start); i < start + n; ++i)
    {
       // We must overflow:
       *out = (i & 1 ? 1 : -1) * policies::raise_overflow_error<T>("boost::math::bernoulli_b2n<%1%>(n)", 0, pol);
@@ -876,7 +876,7 @@ struct bernoulli_initializer
    {
       init()
       {
-         boost::math::bernoulli_b2n<T>(max_bernoulli<T>::value + 1, Policy());
+         boost::math::bernoulli_b2n<T>(max_bernoulli_b2n<T>::value + 1, Policy());
       }
       void force_instantiate()const{}
    };
@@ -894,7 +894,7 @@ const typename bernoulli_initializer<T, Policy>::init bernoulli_initializer<T, P
 template <class T, class OutputIterator, class Policy>
 OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::size_t n, const Policy& pol, const mpl::int_<0>& tag)
 {
-   for(std::size_t i = start; (i <= max_bernoulli<T>::value) && (i < start + n); ++i)
+   for(std::size_t i = start; (i <= max_bernoulli_b2n<T>::value) && (i < start + n); ++i)
    {
       *out = unchecked_bernoulli_imp<T>(i, tag);
       ++out;
@@ -902,7 +902,7 @@ OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::
    //
    // Short circuit return so we don't grab the mutex below unless we have to:
    //
-   if(start + n <= max_bernoulli<T>::value)
+   if(start + n <= max_bernoulli_b2n<T>::value)
       return out;
 
    bernoulli_initializer<T, Policy>::force_instantiate();
@@ -917,7 +917,7 @@ OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::
       std::size_t new_size = (std::max)((std::max)(start + n, std::size_t(bn.size() + 200)), std::size_t(500));
       tangent_numbers_series<T>(bn, new_size, pol);
    }
-   for(std::size_t i = (std::max)(max_bernoulli<T>::value + 1, start); i < start + n; ++i)
+   for(std::size_t i = (std::max)(max_bernoulli_b2n<T>::value + 1, start); i < start + n; ++i)
    {
       *out = bn[i];
       ++out;
