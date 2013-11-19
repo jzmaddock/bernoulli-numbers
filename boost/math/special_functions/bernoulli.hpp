@@ -645,7 +645,7 @@ inline T unchecked_bernoulli_imp(std::size_t n, const mpl::int_<3>& )
 }
 
 template<class T>
-bool bernouli_impl_index_does_overflow(std::size_t n)
+inline bool bernouli_impl_index_does_overflow(std::size_t n, const mpl::true_&)
 {
    // There are certain cases for which the index n, when trying
    // to compute Bn, is known to overflow. In particular, when
@@ -655,28 +655,37 @@ bool bernouli_impl_index_does_overflow(std::size_t n)
 
    bool the_index_does_overflow = false;
 
-   if(std::numeric_limits<T>::is_specialized)
+   if(std::numeric_limits<T>::max_exponent == 128)
    {
-      if(std::numeric_limits<T>::max_exponent == 128)
-      {
-         // This corresponds to 4-byte float, IEEE 745 conformant.
-         the_index_does_overflow = (n >= 64);
-      }
+      // This corresponds to 4-byte float, IEEE 745 conformant.
+      the_index_does_overflow = (n >= max_bernoulli<float>::value * 2);
+   }
 
-      if(std::numeric_limits<T>::max_exponent == 1024)
-      {
-         // This corresponds to 8-byte float, IEEE 745 conformant.
-         the_index_does_overflow = (n >= 260);
-      }
+   if(std::numeric_limits<T>::max_exponent == 1024)
+   {
+      // This corresponds to 8-byte float, IEEE 745 conformant.
+      the_index_does_overflow = (n >= max_bernoulli<double>::value * 2);
+   }
+
+   if(std::numeric_limits<T>::max_exponent == 16384)
+   {
+      // This corresponds to 16-byte float, IEEE 745 conformant.
+      the_index_does_overflow = (n >= max_bernoulli<long double>::value * 2);
    }
 
    return the_index_does_overflow;
 }
 
 template<class T>
+bool bernouli_impl_index_does_overflow(std::size_t, const mpl::false_&)
+{
+   return false;
+}
+
+template<class T>
 bool bernouli_impl_index_might_overflow(std::size_t n)
 {
-   if(bernouli_impl_index_does_overflow<T>(n))
+   if(bernouli_impl_index_does_overflow<T>(n, mpl::bool_<std::numeric_limits<T>::is_specialized>()))
    {
       // If the index *does* overflow, then it also *might* overflow.
       return true;
@@ -747,7 +756,7 @@ inline typename disable_if_c<std::numeric_limits<T>::is_specialized, int>::type 
 
 
 template<class T, class Container, class Policy>
-inline void tangent(Container& tangent_numbers, std::size_t m, const Policy& pol)
+inline void tangent(Container& tangent_numbers, std::size_t m, const Policy&)
 {
    static const std::size_t min_overflow_index = possible_overflow_index<T>();
 
@@ -760,7 +769,8 @@ inline void tangent(Container& tangent_numbers, std::size_t m, const Policy& pol
          && (boost::math::tools::max_value<T>()/(k - 1) < tangent_numbers[k - 1])
          )
       {
-         tangent_numbers[k] = boost::math::tools::max_value<T>();
+         std::fill(tangent_numbers.begin() + k, tangent_numbers.end(), boost::math::tools::max_value<T>());
+         break;
       }
       else
       {
@@ -779,7 +789,8 @@ inline void tangent(Container& tangent_numbers, std::size_t m, const Policy& pol
             || ((boost::math::isinf)(tangent_numbers[j])))
             )
          {
-            tangent_numbers[j] = boost::math::tools::max_value<T>();
+            std::fill(tangent_numbers.begin() + j, tangent_numbers.end(), boost::math::tools::max_value<T>());
+            break;
          }
          else
          {
@@ -837,13 +848,22 @@ void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &po
    }
 }
 
-template <class T, class Policy, int N>
-T bernoulli_number_imp(std::size_t n, const Policy& pol, const mpl::int_<N>& tag)
+template <class T, class OutputIterator, class Policy, int N>
+OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::size_t n, const Policy& pol, const mpl::int_<N>& tag)
 {
-   if(n <= max_bernoulli<T>::value)
-      return unchecked_bernoulli_imp<T>(n, tag);
-   // We must overflow:
-   return (n & 1 ? 1 : -1) * policies::raise_overflow_error<T>("boost::math::bernoulli_b2n<%1%>(n)", 0, pol);
+   for(std::size_t i = start; (i <= max_bernoulli<T>::value) && (i < start + n); ++i)
+   {
+      *out = unchecked_bernoulli_imp<T>(i, tag);
+      ++out;
+   }
+   
+   for(std::size_t i = (std::max)(max_bernoulli<T>::value + 1, start); i < start + n; ++i)
+   {
+      // We must overflow:
+      *out = (i & 1 ? 1 : -1) * policies::raise_overflow_error<T>("boost::math::bernoulli_b2n<%1%>(n)", 0, pol);
+      ++out;
+   }
+   return out;
 }
 
 //
@@ -871,11 +891,19 @@ template <class T, class Policy>
 const typename bernoulli_initializer<T, Policy>::init bernoulli_initializer<T, Policy>::initializer;
 
 
-template <class T, class Policy>
-T bernoulli_number_imp(std::size_t n, const Policy& pol, const mpl::int_<0>& tag)
+template <class T, class OutputIterator, class Policy>
+OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::size_t n, const Policy& pol, const mpl::int_<0>& tag)
 {
-   if(n <= max_bernoulli<T>::value)
-      return unchecked_bernoulli_imp<T>(n, tag);
+   for(std::size_t i = start; (i <= max_bernoulli<T>::value) && (i < start + n); ++i)
+   {
+      *out = unchecked_bernoulli_imp<T>(i, tag);
+      ++out;
+   }
+   //
+   // Short circuit return so we don't grab the mutex below unless we have to:
+   //
+   if(start + n <= max_bernoulli<T>::value)
+      return out;
 
    bernoulli_initializer<T, Policy>::force_instantiate();
 
@@ -884,12 +912,17 @@ T bernoulli_number_imp(std::size_t n, const Policy& pol, const mpl::int_<0>& tag
 
    boost::detail::lightweight_mutex::scoped_lock l(m);
 
-   if(n >= bn.size())
+   if(start + n >= bn.size())
    {
-      std::size_t new_size = (std::max)((std::max)(n, std::size_t(bn.size() + 200)), std::size_t(500));
+      std::size_t new_size = (std::max)((std::max)(start + n, std::size_t(bn.size() + 200)), std::size_t(500));
       tangent_numbers_series<T>(bn, new_size, pol);
    }
-   return bn[n];
+   for(std::size_t i = (std::max)(max_bernoulli<T>::value + 1, start); i < start + n; ++i)
+   {
+      *out = bn[i];
+      ++out;
+   }
+   return out;
 }
 
 } // namespace detail
@@ -909,7 +942,9 @@ inline T bernoulli_b2n(const int i, const Policy &pol)
    if(i < 0)
       policies::raise_domain_error<T>("boost::math::bernoulli<%1%>", "Index should be >= 0 but got %1%", T(i), pol);
 
-   return boost::math::detail::bernoulli_number_imp<T>(static_cast<std::size_t>(i), pol, tag_type());
+   T result;
+   boost::math::detail::bernoulli_number_imp<T>(&result, static_cast<std::size_t>(i), 1u, pol, tag_type());
+   return result;
 }
 
 template <class T>
@@ -918,6 +953,26 @@ inline T bernoulli_b2n(const int i)
    return boost::math::bernoulli_b2n<T>(i, policies::policy<>());
 }
 
+template <class T, class OutputIterator, class Policy>
+inline OutputIterator bernoulli_b2n(int start_index,
+                                    unsigned number_of_bernoullis_b2n,
+                                    OutputIterator out_it,
+                                    const Policy& pol)
+{
+   typedef mpl::int_<detail::bernoulli_imp_variant<T>::value> tag_type;
+   if(start_index < 0)
+      policies::raise_domain_error<T>("boost::math::bernoulli<%1%>", "Index should be >= 0 but got %1%", T(start_index), pol);
+
+   return boost::math::detail::bernoulli_number_imp<T>(out_it, start_index, number_of_bernoullis_b2n, pol, tag_type());
+}
+
+template <class T, class OutputIterator>
+inline OutputIterator bernoulli_b2n(int start_index,
+                                    unsigned number_of_bernoullis_b2n,
+                                    OutputIterator out_it)
+{
+   return boost::math::bernoulli_b2n<T, OutputIterator>(start_index, number_of_bernoullis_b2n, out_it, policies::policy<>());
+}
 
 } } // namespace boost::math
 

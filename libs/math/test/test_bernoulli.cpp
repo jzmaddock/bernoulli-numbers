@@ -156,7 +156,37 @@ void test(const char* name)
          BOOST_CHECK_CLOSE_FRACTION(b2n, data[i - 1], tol);
       }
    }
+   //
+   // Test consistency of array interface:
+   //
+   T bn[boost::math::max_bernoulli<T>::value + 20];
+   boost::math::bernoulli_b2n<T>(0, boost::math::max_bernoulli<T>::value + 20, bn);
 
+   for(unsigned i = 0; i < boost::math::max_bernoulli<T>::value + 20; ++i)
+   {
+      BOOST_CHECK_EQUAL(bn[i], boost::math::bernoulli_b2n<T>(i));
+   }
+}
+
+void test_real_concept_extra()
+{
+   boost::math::concepts::real_concept tol = boost::math::tools::epsilon<boost::math::concepts::real_concept>() * 20;
+   for(unsigned i = 0; i <= boost::math::max_bernoulli<long double>::value; ++i)
+   {
+      BOOST_CHECK_CLOSE_FRACTION(static_cast<boost::math::concepts::real_concept>(boost::math::bernoulli_b2n<long double>(i)), boost::math::bernoulli_b2n<boost::math::concepts::real_concept>(i), tol);
+   }
+   for(unsigned i = 1; i < 500; ++i)
+   {
+      boost::math::concepts::real_concept r = boost::math::bernoulli_b2n<long double>(i + boost::math::max_bernoulli<long double>::value);
+      if((i + boost::math::max_bernoulli<long double>::value) & 1)
+      {
+         BOOST_CHECK(r >= boost::math::tools::max_value<boost::math::concepts::real_concept>());
+      }
+      else
+      {
+         BOOST_CHECK(r <= -boost::math::tools::max_value<boost::math::concepts::real_concept>());
+      }
+   }
 }
 
 
@@ -166,9 +196,7 @@ BOOST_AUTO_TEST_CASE( test_main )
    test<double>("double");
    test<long double>("long double");
    test<boost::math::concepts::real_concept>("real_concept");
+   test_real_concept_extra();
 }
-
-
-
 
 
