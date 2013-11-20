@@ -15,6 +15,7 @@
 #include <cmath>
 #include <boost/math/policies/error_handling.hpp>
 #include <boost/math/constants/constants.hpp>
+#include <boost/math/special_functions/math_fwd.hpp>
 #include <boost/mpl/int.hpp>
 #include <boost/type_traits/is_convertible.hpp>
 #include <boost/detail/lightweight_mutex.hpp>
@@ -44,7 +45,7 @@ struct max_bernoulli_index<2>
 template <>
 struct max_bernoulli_index<3>
 {
-   BOOST_STATIC_CONSTANT(unsigned, value = 1157);
+   BOOST_STATIC_CONSTANT(unsigned, value = 1156);
 };
 
 template <class T>
@@ -644,48 +645,63 @@ inline T unchecked_bernoulli_imp(std::size_t n, const mpl::int_<3>& )
    return bernoulli_data[n];
 }
 
-template<class T>
-inline bool bernouli_impl_index_does_overflow(std::size_t n, const mpl::true_&)
+template <class T>
+struct bernoulli_overflow_variant
 {
-   // There are certain cases for which the index n, when trying
-   // to compute Bn, is known to overflow. In particular, when
-   // using 32-bit float and 64-bit double (IEEE 754 conformant),
-   // overflow will occur if the index exceeds the amount allowed
-   // in the tables of Bn.
+   static const unsigned value = 
+      (std::numeric_limits<T>::max_exponent == 128)
+      && (std::numeric_limits<T>::radix == 2) ? 1 :
+      (
+         (std::numeric_limits<T>::max_exponent == 1024)
+         && (std::numeric_limits<T>::radix == 2) ? 2 :
+         (
+            (std::numeric_limits<T>::max_exponent == 16384)
+            && (std::numeric_limits<T>::radix == 2) ? 3 : 0
+         )
+      );
+};
 
-   bool the_index_does_overflow = false;
+template<class T>
+inline bool bernouli_impl_index_does_overflow(std::size_t, const mpl::int_<0>&)
+{
+   return false;
+}
 
-   if(std::numeric_limits<T>::max_exponent == 128)
-   {
-      // This corresponds to 4-byte float, IEEE 745 conformant.
-      the_index_does_overflow = (n >= max_bernoulli_index<1>::value * 2);
-   }
-
-   if(std::numeric_limits<T>::max_exponent == 1024)
-   {
-      // This corresponds to 8-byte float, IEEE 745 conformant.
-      the_index_does_overflow = (n >= max_bernoulli_index<2>::value * 2);
-   }
-
-   if(std::numeric_limits<T>::max_exponent == 16384)
-   {
-      // This corresponds to 16-byte float, IEEE 745 conformant.
-      the_index_does_overflow = (n >= max_bernoulli_index<3>::value * 2);
-   }
-
-   return the_index_does_overflow;
+// There are certain cases for which the index n, when trying
+// to compute Bn, is known to overflow. In particular, when
+// using 32-bit float and 64-bit double (IEEE 754 conformant),
+// overflow will occur if the index exceeds the amount allowed
+// in the tables of Bn.
+template<class T>
+inline bool bernouli_impl_index_does_overflow(std::size_t n, const mpl::int_<1>&)
+{
+   // This corresponds to 4-byte float, IEEE 745 conformant.
+   return n >= max_bernoulli_index<1>::value * 2;
+}
+template<class T>
+inline bool bernouli_impl_index_does_overflow(std::size_t n, const mpl::int_<2>&)
+{
+   // This corresponds to 8-byte float, IEEE 745 conformant.
+   return n >= max_bernoulli_index<2>::value * 2;
+}
+template<class T>
+inline bool bernouli_impl_index_does_overflow(std::size_t n, const mpl::int_<3>&)
+{
+   // This corresponds to 16-byte float, IEEE 745 conformant.
+   return n >= max_bernoulli_index<3>::value * 2;
 }
 
 template<class T>
-bool bernouli_impl_index_does_overflow(std::size_t, const mpl::false_&)
+inline bool bernouli_impl_index_does_overflow(std::size_t n)
 {
-   return false;
+   typedef mpl::int_<bernoulli_overflow_variant<T>::value> tag_type;
+   return bernouli_impl_index_does_overflow<T>(n, tag_type());
 }
 
 template<class T>
 bool bernouli_impl_index_might_overflow(std::size_t n)
 {
-   if(bernouli_impl_index_does_overflow<T>(n, mpl::bool_<std::numeric_limits<T>::is_specialized>()))
+   if(bernouli_impl_index_does_overflow<T>(n))
    {
       // If the index *does* overflow, then it also *might* overflow.
       return true;
@@ -708,7 +724,7 @@ bool bernouli_impl_index_might_overflow(std::size_t n)
       + (T(1) / (nx2 * nx2 * nx * 1260))
       + n * boost::math::constants::ln_two<T>()
       - log(nx)
-      + log(ldexp(T(1), n) - 1);
+      + log(ldexp(T(1), (int)n) - 1);
 
    return approximate_log_of_bn * 1.1 > boost::math::tools::log_max_value<T>();
 }
@@ -744,14 +760,14 @@ std::size_t possible_overflow_index()
 }
 
 template <class T>
-inline typename enable_if_c<std::numeric_limits<T>::is_specialized, int>::type tangent_scale_factor()
+inline typename enable_if_c<std::numeric_limits<T>::is_specialized && (std::numeric_limits<T>::radix == 2), T>::type tangent_scale_factor()
 {
-   return std::numeric_limits<T>::min_exponent + 5;
+   return ldexp(T(1), -std::numeric_limits<T>::min_exponent + 5);
 }
 template <class T>
-inline typename disable_if_c<std::numeric_limits<T>::is_specialized, int>::type tangent_scale_factor()
+inline typename disable_if_c<std::numeric_limits<T>::is_specialized && (std::numeric_limits<T>::radix == 2), T>::type tangent_scale_factor()
 {
-   return boost::math::itrunc(tools::log_min_value<T>() / constants::ln_two<T>() + 5);
+   return tools::min_value<T>() * 16;
 }
 
 
@@ -761,7 +777,7 @@ inline void tangent(Container& tangent_numbers, std::size_t m, const Policy&)
    static const std::size_t min_overflow_index = possible_overflow_index<T>();
 
    tangent_numbers[0U] = T(0U);
-   tangent_numbers[1U] = ldexp(T(1U), tangent_scale_factor<T>());
+   tangent_numbers[1U] = tangent_scale_factor<T>();
 
    for(std::size_t k = 2U; k < m; k++)
    {
@@ -823,7 +839,7 @@ void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &po
       // the calculation, but we also need to avoid overflow altogether in case
       // we're calculating with a type where "bad things" happen in that case:
       //
-      b  = ldexp(b / power_two, -tangent_scale_factor<T>());
+      b  = b / (power_two * tangent_scale_factor<T>());
       b /= (power_two - 1);
       if((i >= min_overflow_index) && (tools::max_value<T>() / bn[i] < b))
       {
