@@ -722,7 +722,7 @@ bool bernouli_impl_index_might_overflow(std::size_t n)
       + (T(1) / (nx * 12))
       - (T(1) / (nx2 * nx * 360))
       + (T(1) / (nx2 * nx2 * nx * 1260))
-      + n * boost::math::constants::ln_two<T>()
+      + (n * boost::math::constants::ln_two<T>())
       - log(nx)
       + log(ldexp(T(1), (int)n) - 1);
 
@@ -734,7 +734,7 @@ std::size_t possible_overflow_index()
 {
    // we use binary search to determine a good approximation for an index that might overflow
 
-   std::size_t upper_limit = 10000;
+   std::size_t upper_limit = 100000;
    std::size_t lower_limit = 1;
 
    if(bernouli_impl_index_might_overflow<T>(upper_limit * 2) == 0)
@@ -798,12 +798,14 @@ inline void tangent(Container& tangent_numbers, std::size_t m, const Policy&)
    {
       for(std::size_t j = k; j < m; j++)
       {
-         if(   (j >= min_overflow_index)
-            && (   (boost::math::tools::max_value<T>() / (j - k) < tangent_numbers[j - 1])
-            || (boost::math::tools::max_value<T>() / (j - k + 2) < tangent_numbers[j])
-            || (boost::math::tools::max_value<T>() - tangent_numbers[j - 1] * (j - k) < tangent_numbers[j] * (j - k + 2))
-            || ((boost::math::isinf)(tangent_numbers[j])))
-            )
+         bool overflow_check = 
+            (j >= min_overflow_index) && (   
+               (boost::math::tools::max_value<T>() / (j - k) < tangent_numbers[j - 1])
+               || (boost::math::tools::max_value<T>() / (j - k + 2) < tangent_numbers[j])
+               || (boost::math::tools::max_value<T>() - tangent_numbers[j - 1] * (j - k) < tangent_numbers[j] * (j - k + 2))
+               || ((boost::math::isinf)(tangent_numbers[j]))
+             );
+         if(overflow_check)
          {
             std::fill(tangent_numbers.begin() + j, tangent_numbers.end(), boost::math::tools::max_value<T>());
             break;
@@ -841,7 +843,8 @@ void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &po
       //
       b  = b / (power_two * tangent_scale_factor<T>());
       b /= (power_two - 1);
-      if((i >= min_overflow_index) && (tools::max_value<T>() / bn[i] < b))
+      bool overflow_check = (i >= min_overflow_index) && (tools::max_value<T>() / bn[i] < b);
+      if(overflow_check)
       {
          while(i < m)
          {

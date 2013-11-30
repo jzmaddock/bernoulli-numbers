@@ -1,4 +1,4 @@
-//  (C) Copyright John Maddock 2006.
+//  (C) Copyright John Maddock 2013.
 //  Use, modification and distribution are subject to the
 //  Boost Software License, Version 1.0. (See accompanying file
 //  LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -10,6 +10,8 @@
 #include <boost/math/concepts/real_concept.hpp>
 #include <boost/math/special_functions/bernoulli.hpp>
 #include <libs/math/test/table_type.hpp>
+#include <iostream>
+#include <iomanip>
 
 #define SC_(x) static_cast<typename table_type<T>::type>(BOOST_JOIN(x, L))
 
