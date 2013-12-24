@@ -948,7 +948,7 @@ struct fixed_vector : private std::allocator<T>
    fixed_vector() : m_used(0)
    { 
       std::size_t overflow_limit = 100 + possible_overflow_index<T>();
-      m_capacity = (std::min)(overflow_limit, static_cast<std::size_t>(10000u));
+      m_capacity = (std::min)(overflow_limit, static_cast<std::size_t>(100000u));
       m_data = this->allocate(m_capacity); 
    }
    ~fixed_vector()
