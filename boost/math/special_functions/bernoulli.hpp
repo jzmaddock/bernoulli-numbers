@@ -19,6 +19,12 @@
 #include <boost/mpl/int.hpp>
 #include <boost/type_traits/is_convertible.hpp>
 #include <boost/detail/lightweight_mutex.hpp>
+//
+// We need Boost.Atomic, but on any platform that supports auto-linking we do
+// not need to link against a separate library:
+//
+#define BOOST_ATOMIC_NO_LIB
+#include <boost/atomic.hpp>
 
 namespace boost { namespace math { 
    
@@ -762,7 +768,7 @@ std::size_t possible_overflow_index()
 template <class T>
 inline typename enable_if_c<std::numeric_limits<T>::is_specialized && (std::numeric_limits<T>::radix == 2), T>::type tangent_scale_factor()
 {
-   return ldexp(T(1), -std::numeric_limits<T>::min_exponent + 5);
+   return ldexp(T(1), std::numeric_limits<T>::min_exponent + 5);
 }
 template <class T>
 inline typename disable_if_c<std::numeric_limits<T>::is_specialized && (std::numeric_limits<T>::radix == 2), T>::type tangent_scale_factor()
@@ -775,46 +781,45 @@ template<class T, class Container, class Policy>
 inline void tangent(Container& tangent_numbers, std::size_t m, const Policy&)
 {
    static const std::size_t min_overflow_index = possible_overflow_index<T>();
+   tangent_numbers.resize(m, T(0U));
 
-   tangent_numbers[0U] = T(0U);
-   tangent_numbers[1U] = tangent_scale_factor<T>();
+   static std::vector<T> intermediates;
+   std::size_t prev_size = intermediates.size();
+   intermediates.resize(m, T(0U));
 
-   for(std::size_t k = 2U; k < m; k++)
+   if(prev_size == 0)
    {
-      if(   (k >= min_overflow_index)
-         && (boost::math::tools::max_value<T>()/(k - 1) < tangent_numbers[k - 1])
-         )
-      {
-         std::fill(tangent_numbers.begin() + k, tangent_numbers.end(), boost::math::tools::max_value<T>());
-         break;
-      }
-      else
-      {
-         tangent_numbers[k] = (k - 1) * tangent_numbers[k - 1];
-      }
+      intermediates[1] = tangent_scale_factor<T>() /*T(1U)*/;
+      tangent_numbers[0U] = T(0U);
+      tangent_numbers[1U] = tangent_scale_factor<T>()/* T(1U)*/;
    }
 
-   for(std::size_t k = 2; k < m; k++)
+   for(std::size_t i = std::max<size_t>(2, prev_size); i < m; i++)
    {
-      for(std::size_t j = k; j < m; j++)
+      if(i >= min_overflow_index && (boost::math::tools::max_value<T>() / (i-1) < intermediates[1]) )
       {
-         bool overflow_check = 
-            (j >= min_overflow_index) && (   
-               (boost::math::tools::max_value<T>() / (j - k) < tangent_numbers[j - 1])
-               || (boost::math::tools::max_value<T>() / (j - k + 2) < tangent_numbers[j])
-               || (boost::math::tools::max_value<T>() - tangent_numbers[j - 1] * (j - k) < tangent_numbers[j] * (j - k + 2))
-               || ((boost::math::isinf)(tangent_numbers[j]))
+         std::fill(tangent_numbers.begin() + i, tangent_numbers.end(), boost::math::tools::max_value<T>());
+         break;
+      }
+      intermediates[1] = intermediates[1] * (i-1);
+      for(std::size_t j = 2; j <= i; j++)
+      {
+         bool overflow_check =
+               (i >= min_overflow_index) && (
+               (boost::math::tools::max_value<T>() / (i - j) < intermediates[j])
+               || (boost::math::tools::max_value<T>() / (i - j + 2) < intermediates[j-1])
+               || (boost::math::tools::max_value<T>() - intermediates[j] * (i - j) < intermediates[j-1] * (i - j + 2))
+               || ((boost::math::isinf)(intermediates[j]))
              );
+
          if(overflow_check)
          {
-            std::fill(tangent_numbers.begin() + j, tangent_numbers.end(), boost::math::tools::max_value<T>());
+            std::fill(tangent_numbers.begin() + i, tangent_numbers.end(), boost::math::tools::max_value<T>());
             break;
          }
-         else
-         {
-            tangent_numbers[j] = (tangent_numbers[j - 1] * (j - k)) + (tangent_numbers[j] * (j - k + 2));
-         }
+         intermediates[j] = intermediates[j] * (i - j) + intermediates[j-1] * (i - j + 2);
       }
+      tangent_numbers[i] = intermediates[i];
    }
 }
 
@@ -824,16 +829,21 @@ void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &po
 {
    static const std::size_t min_overflow_index = possible_overflow_index<T>();
 
-   bn.clear();
+   Container::size_type old_size = bn.size();
+   static Container tn;
+
+   tangent<T>(tn, m, pol);
    bn.resize(m);
 
-   tangent<T>(bn, m, pol);
+   if(!old_size)
+   {
+      bn[0] = 1;
+      old_size = 1;
+   }
 
-   T power_two(4);
+   T power_two(ldexp(T(1), static_cast<int>(2 * old_size)));
 
-   bn[0] = 1;
-
-   for(std::size_t i = 1; i < m; i++)
+   for(std::size_t i = old_size; i < m; i++)
    {
       T b(i * 2);
       //
@@ -856,10 +866,10 @@ void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &po
       }
       else
       {
-         b *= bn[i];
+         b *= tn[i];
       }
 
-      power_two *= 4;
+      power_two = ldexp(power_two, 2);
 
       const bool b_neg = i % 2 == 0;
 
@@ -909,6 +919,59 @@ struct bernoulli_initializer
 template <class T, class Policy>
 const typename bernoulli_initializer<T, Policy>::init bernoulli_initializer<T, Policy>::initializer;
 
+//
+// We need a type to use as an atomic counter:
+//
+#if BOOST_ATOMIC_INT_LOCK_FREE == 2
+typedef boost::atomic<int> atomic_counter_type;
+#elif BOOST_ATOMIC_SHORT_LOCK_FREE == 2
+typedef boost::atomic<short> atomic_counter_type;
+#elif BOOST_ATOMIC_LONG_LOCK_FREE == 2
+typedef boost::atomic<long> atomic_counter_type;
+#elif BOOST_ATOMIC_LLONG_LOCK_FREE == 2
+typedef boost::atomic<long long> atomic_counter_type;
+#else
+typedef boost::atomic<int> atomic_counter_type;
+#endif
+//
+// Very very simple vector class that will never allocate more than once, we could use
+// boost::container::static_vector here, but that allocates on the stack, which may well
+// cause issues for the amount of memory we want in the extreme case...
+//
+template <class T, unsigned N>
+struct fixed_vector : private std::allocator<T>
+{
+   typedef unsigned size_type;
+   typedef T* iterator;
+   typedef const T* const_iterator;
+   fixed_vector() : m_used(0) { m_data = this->allocate(N); }
+   ~fixed_vector()
+   {
+      for(unsigned i = 0; i < m_used; ++i)
+         this->destroy(&m_data[i]);
+      this->deallocate(m_data, N);
+   }
+   T& operator[](unsigned n) { BOOST_ASSERT(n < m_used); return m_data[n]; }
+   const T& operator[](unsigned n)const { BOOST_ASSERT(n < m_used); return m_data[n]; }
+   unsigned size()const { return m_used; }
+   unsigned size() { return m_used; }
+   void resize(unsigned n, const T& val)
+   {
+      if(n > N)
+         throw std::runtime_error("Exhausted storage for Bernoulli numbers.");
+      for(unsigned i = m_used; i < n; ++i)
+         new (m_data + i) T(val);
+      m_used = n;
+   }
+   void resize(unsigned n) { resize(n, T()); }
+   T* begin() { return m_data; }
+   T* end() { return m_data + m_used; }
+   T* begin()const { return m_data; }
+   T* end()const { return m_data + m_used; }
+private:
+   T* m_data;
+   unsigned m_used;
+};
 
 template <class T, class OutputIterator, class Policy>
 OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::size_t n, const Policy& pol, const mpl::int_<0>& tag)
@@ -926,16 +989,29 @@ OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::
 
    bernoulli_initializer<T, Policy>::force_instantiate();
 
-   static std::vector<T> bn;
+   static fixed_vector<T, 10000> bn;
+   static atomic_counter_type counter(0);
    static boost::detail::lightweight_mutex m;
 
-   boost::detail::lightweight_mutex::scoped_lock l(m);
-
-   if(start + n >= bn.size())
+   //
+   // Get the counter and see if we need to calculate more constants:
+   //
+   if(static_cast<std::size_t>(counter.load(boost::memory_order_consume)) < start + n)
    {
-      std::size_t new_size = (std::max)((std::max)(start + n, std::size_t(bn.size() + 200)), std::size_t(500));
-      tangent_numbers_series<T>(bn, new_size, pol);
+      boost::detail::lightweight_mutex::scoped_lock l(m);
+
+      if(static_cast<std::size_t>(counter.load(boost::memory_order_consume)) < start + n)
+      {
+         if(start + n >= bn.size())
+         {
+            std::size_t new_size = (std::max)((std::max)(start + n, std::size_t(bn.size() + 20)), std::size_t(50));
+            tangent_numbers_series<T>(bn, new_size, pol);
+         }
+         counter.store(bn.size(), boost::memory_order_release);
+      }
    }
+
+
    for(std::size_t i = (std::max)(max_bernoulli_b2n<T>::value + 1, start); i < start + n; ++i)
    {
       *out = bn[i];
