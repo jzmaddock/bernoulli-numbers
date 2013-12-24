@@ -825,7 +825,7 @@ inline void tangent(Container& tangent_numbers, std::size_t m, const Policy&)
 
 
 template <class T, class Container, class Policy>
-void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &pol)
+void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &pol, std::size_t* p_overflow_limit)
 {
    static const std::size_t min_overflow_index = possible_overflow_index<T>();
 
@@ -856,6 +856,7 @@ void tangent_numbers_series(Container& bn, const std::size_t m, const Policy &po
       bool overflow_check = (i >= min_overflow_index) && (tools::max_value<T>() / bn[i] < b);
       if(overflow_check)
       {
+         *p_overflow_limit = i;
          while(i < m)
          {
             b = std::numeric_limits<T>::has_infinity ? std::numeric_limits<T>::infinity() : tools::max_value<T>();
@@ -938,18 +939,23 @@ typedef boost::atomic<int> atomic_counter_type;
 // boost::container::static_vector here, but that allocates on the stack, which may well
 // cause issues for the amount of memory we want in the extreme case...
 //
-template <class T, unsigned N>
+template <class T>
 struct fixed_vector : private std::allocator<T>
 {
    typedef unsigned size_type;
    typedef T* iterator;
    typedef const T* const_iterator;
-   fixed_vector() : m_used(0) { m_data = this->allocate(N); }
+   fixed_vector() : m_used(0)
+   { 
+      std::size_t overflow_limit = 100 + possible_overflow_index<T>();
+      m_capacity = (std::min)(overflow_limit, static_cast<std::size_t>(10000u));
+      m_data = this->allocate(m_capacity); 
+   }
    ~fixed_vector()
    {
       for(unsigned i = 0; i < m_used; ++i)
          this->destroy(&m_data[i]);
-      this->deallocate(m_data, N);
+      this->deallocate(m_data, m_capacity);
    }
    T& operator[](unsigned n) { BOOST_ASSERT(n < m_used); return m_data[n]; }
    const T& operator[](unsigned n)const { BOOST_ASSERT(n < m_used); return m_data[n]; }
@@ -957,7 +963,7 @@ struct fixed_vector : private std::allocator<T>
    unsigned size() { return m_used; }
    void resize(unsigned n, const T& val)
    {
-      if(n > N)
+      if(n > m_capacity)
          throw std::runtime_error("Exhausted storage for Bernoulli numbers.");
       for(unsigned i = m_used; i < n; ++i)
          new (m_data + i) T(val);
@@ -970,7 +976,7 @@ struct fixed_vector : private std::allocator<T>
    T* end()const { return m_data + m_used; }
 private:
    T* m_data;
-   unsigned m_used;
+   unsigned m_used, m_capacity;
 };
 
 template <class T, class OutputIterator, class Policy>
@@ -987,11 +993,16 @@ OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::
    if(start + n <= max_bernoulli_b2n<T>::value)
       return out;
 
+   //
+   // Force this function to be called at program startup so all the static variables
+   // get initailzed then (thread safety).
+   //
    bernoulli_initializer<T, Policy>::force_instantiate();
 
-   static fixed_vector<T, 10000> bn;
+   static fixed_vector<T> bn;
    static atomic_counter_type counter(0);
    static boost::detail::lightweight_mutex m;
+   static std::size_t overflow_limit = (std::numeric_limits<std::size_t>::max)();
 
    //
    // Get the counter and see if we need to calculate more constants:
@@ -1005,7 +1016,7 @@ OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::
          if(start + n >= bn.size())
          {
             std::size_t new_size = (std::max)((std::max)(start + n, std::size_t(bn.size() + 20)), std::size_t(50));
-            tangent_numbers_series<T>(bn, new_size, pol);
+            tangent_numbers_series<T>(bn, new_size, pol, &overflow_limit);
          }
          counter.store(bn.size(), boost::memory_order_release);
       }
@@ -1014,7 +1025,7 @@ OutputIterator bernoulli_number_imp(OutputIterator out, std::size_t start, std::
 
    for(std::size_t i = (std::max)(max_bernoulli_b2n<T>::value + 1, start); i < start + n; ++i)
    {
-      *out = bn[i];
+      *out = (i >= overflow_limit) ? policies::raise_overflow_error<T>("boost::math::bernoulli<%1%>(std::size_t)", 0, pol) : bn[i];
       ++out;
    }
    return out;

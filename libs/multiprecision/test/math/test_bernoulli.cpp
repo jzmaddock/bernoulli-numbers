@@ -35,7 +35,7 @@ void test(const char* name)
    };
 
    T tol = boost::math::tools::epsilon<T>() * 20;
-   for(unsigned i = 1; i <= 100; ++i)
+   for(unsigned i = 1; i <= sizeof(data) / sizeof(data[0]); ++i)
    {
       T b2n = boost::math::bernoulli_b2n<T>(i);
       if((boost::math::isinf)(b2n))
